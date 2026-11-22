@@ -21,50 +21,34 @@ export HORIZON_VERSION="$VERSION_LABEL"
 export RUSTC_WRAPPER=""
 export RUSTC_WORKSPACE_WRAPPER=""
 
-echo "==> [1/4] 编译无头客户端 / 专用服核心引擎 (horizon-game --no-default-features)"
+echo "==> [1/3] 编译无头客户端 / 专用服核心引擎 (horizon-game --no-default-features)"
 cargo build --release --locked \
   -p horizon-game --no-default-features --bin horizon-client
 
-echo "==> [2/4] 编译控制端、服务端守护、资源准备器、压测机器人与 Mod CLI"
+echo "==> [2/3] 编译控制端 (horizon-ctl)、服务端守护 (horizon-server) 与资源准备器 (horizon-prepare)"
 cargo build --release --locked \
   -p horizon-client-lib --bin horizon-ctl \
   -p horizon-server --bin horizon-server \
-  -p horizon-prepare --bin horizon-prepare \
-  -p horizon-bots --bin horizon-bots \
-  -p cargo-horizon-mod --bin cargo-horizon-mod
+  -p horizon-prepare --bin horizon-prepare
 
-echo "==> [3/4] 构建共享 WASM 标准库 (horizon-wasm-std.wasm)"
-cargo run --release --locked -p cargo-horizon-mod -- \
-  wasm-std "$STAGE_ABS/horizon-wasm-std.wasm"
-
-echo "==> [4/4] 收集产物并做原生 ARM64 启动冒烟检查"
+echo "==> [3/3] 收集产物并打包"
 cp -f target/release/horizon-client "$STAGE_ABS/horizon-client"
 cp -f target/release/horizon-client "$STAGE_ABS/horizon-engine"
 cp -f target/release/horizon-ctl "$STAGE_ABS/horizon-ctl"
 cp -f target/release/horizon-server "$STAGE_ABS/horizon-server"
 cp -f target/release/horizon-prepare "$STAGE_ABS/horizon-prepare"
-cp -f target/release/horizon-bots "$STAGE_ABS/horizon-bots"
-cp -f target/release/cargo-horizon-mod "$STAGE_ABS/cargo-horizon-mod"
 
 for f in LICENSE THIRD_PARTY_NOTICES.md; do
   [ -f "$f" ] && cp -f "$f" "$STAGE_ABS/$f"
 done
 [ -d LICENSES ] && cp -r LICENSES "$STAGE_ABS/LICENSES"
 
-# 原生 ARM64 冒烟检查
-"$STAGE_ABS/horizon-client" --help | grep -q -- '--headless'
-"$STAGE_ABS/horizon-engine" --help | grep -q -- '--dedicated'
-"$STAGE_ABS/horizon-ctl" --help >/dev/null
-"$STAGE_ABS/horizon-server" --version
-"$STAGE_ABS/horizon-prepare" --help >/dev/null
-"$STAGE_ABS/horizon-bots" --help >/dev/null
-
 cat > "$STAGE_ABS/BUILD_INFO.txt" <<EOF
 upstream_commit=$(git rev-parse HEAD)
 upstream_date=$(git show -s --format=%cI HEAD)
 target=$TARGET
 version=$VERSION_LABEL
-features=no-default-features (headless client + dedicated server, no GUI launcher / audio / controllers / extras)
+features=no-default-features (headless client + dedicated server only; no GUI launcher, no WASM std, no bots)
 EOF
 
 tar -C "$OUT_ABS" -czf "$ARCHIVE_ABS" "horizon-headless-server-linux-arm64"

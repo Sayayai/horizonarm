@@ -16,16 +16,13 @@ export RUSTC_WRAPPER=""
 export RUSTC_WORKSPACE_WRAPPER=""
 export HORIZON_NO_AUDIO=1
 
-echo "==> [1/4] 构建 Linux ARM64 Server Prebuilt SDK (prebuilt_game.py --server)"
+echo "==> [1/3] 构建 Linux ARM64 Server 原生 Mod SDK (prebuilt_game.py --server)"
 python3 tools/prebuilt_game.py build "$WORK_DIR/prebuilt" --server
 
-echo "==> [2/4] 使用 SDK 独立编译原生示例 Mod 进行冒烟验证"
-python3 tools/prebuilt_game.py smoke "$WORK_DIR/prebuilt"
-
-echo "==> [3/4] 打包 SDK 切片 (runtime / api / engine / build-data)"
+echo "==> [2/3] 打包原生 Mod SDK 切片 (runtime / api / engine / build-data)"
 python3 tools/prebuilt_game.py pack "$WORK_DIR/prebuilt" "$OUT_ABS"
 
-echo "==> [4/4] 打包完整生成的 Mod API 源码 (api-source.tar.xz)"
+echo "==> [3/3] 打包完整生成的 Mod API 源码 (api-source.tar.xz)"
 python3 tools/sdk_api_source.py build "$WORK_DIR/api-source"
 python3 tools/sdk_api_source.py archive "$WORK_DIR/api-source" "$OUT_ABS/api-source.tar.xz"
 

@@ -1,4 +1,4 @@
-name: Build Linux ARM64 (Headless + Server + SDK)
+name: Build Linux ARM64 (Headless + Server + Native SDK)
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ on:
           - ubuntu-26.04-arm
           - ubuntu-24.04-arm
       build_sdk:
-        description: '同时编译 Linux ARM64 Server Mod SDK'
+        description: '同时编译 Linux ARM64 原生 Mod SDK'
         type: boolean
         default: true
       publish_release:
@@ -85,7 +85,6 @@ jobs:
           REF="${INPUT_REF:-${UPSTREAM_REF:-main}}"
           RUNNER="${INPUT_RUNNER:-ubuntu-26.04-arm}"
 
-          # 解析上游精确 Commit SHA
           SHA="$(git ls-remote "https://github.com/${REPO}.git" "$REF" | awk 'NR==1 {print $1}')"
           if [[ -z "$SHA" ]]; then
             SHA="$REF"
@@ -94,7 +93,6 @@ jobs:
           DATE_TAG="$(date -u +%Y.%m.%d)"
           VERSION="${DATE_TAG}-${SHORT_SHA}"
 
-          # 读取上游锁定的 Rust 版本
           RUST_VER="$(curl -fsSL "https://raw.githubusercontent.com/${REPO}/${SHA}/tools/ci/rust-version" | tr -d '[:space:]')"
 
           {
@@ -127,11 +125,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install Rust ${{ needs.resolve.outputs.rust_version }} + wasm32
+      - name: Install Rust ${{ needs.resolve.outputs.rust_version }}
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-11
         with:
           toolchain: ${{ needs.resolve.outputs.rust_version }}
-          targets: wasm32-unknown-unknown
 
       - name: Cache Cargo Build
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -145,7 +142,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config cmake libssl-dev libasound2-dev libudev-dev
 
-      - name: Build Headless Client, Server & Tools
+      - name: Build Headless Client & Server
         run: |
           chmod +x scripts/build-binaries.sh
           ./scripts/build-binaries.sh upstream dist/binaries "${{ needs.resolve.outputs.version }}"
@@ -160,7 +157,7 @@ jobs:
           retention-days: 7
 
   build-sdk:
-    name: Build Server Mod SDK (ARM64)
+    name: Build Native Mod SDK (ARM64)
     needs: resolve
     if: needs.resolve.outputs.build_sdk == 'true'
     runs-on: ${{ needs.resolve.outputs.runner }}
@@ -177,10 +174,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install Rust ${{ needs.resolve.outputs.rust_version }} + wasm32
+      - name: Install Rust ${{ needs.resolve.outputs.rust_version }}
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-11
         with:
           toolchain: ${{ needs.resolve.outputs.rust_version }}
+          # 仅用于上游 sdk_api_source.py 生成 api-source.tar.xz 时的内部校验，不编译任何 wasm 产物
           targets: wasm32-unknown-unknown
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -199,7 +197,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config cmake libssl-dev libasound2-dev libudev-dev
 
-      - name: Build & Verify ARM64 Server SDK
+      - name: Build ARM64 Native Mod SDK
         run: |
           chmod +x scripts/build-sdk.sh
           ./scripts/build-sdk.sh upstream dist/sdk
@@ -258,8 +256,8 @@ jobs:
           - **目标架构**：\`aarch64-unknown-linux-gnu\`
           - **Rust 工具链**：\`${RUST_VER}\`
           - **包含内容**：
-            - \`horizon-headless-server-linux-arm64.tar.gz\`：无头客户端 / 专用服引擎（\`horizon-client\` / \`horizon-engine\`，\`--no-default-features\` 无启动器与桌面外设）、\`horizon-ctl\`（CLI + MCP）、\`horizon-server\`、\`horizon-prepare\`、\`horizon-bots\`、\`cargo-horizon-mod\`、\`horizon-wasm-std.wasm\`
-            - Linux ARM64 Server Prebuilt SDK 切片与 \`api-source.tar.xz\`（如已启用 SDK 构建）
+            - \`horizon-headless-server-linux-arm64.tar.gz\`：无头客户端 / 专用服引擎（\`horizon-client\` / \`horizon-engine\`，\`--no-default-features\`）、\`horizon-ctl\`（CLI + MCP）、\`horizon-server\`、\`horizon-prepare\`
+            - Linux ARM64 原生 Mod SDK 切片与 \`api-source.tar.xz\`（不编译 WASM 标准库、不编译压测机器人、不跑官方测试）
           EOF
           )
 
