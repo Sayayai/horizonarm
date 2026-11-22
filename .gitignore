@@ -1,0 +1,7 @@
+.DS_Store
+dist/
+upstream/
+target/
+*.tar.gz
+*.tar.xz
+*.sha256

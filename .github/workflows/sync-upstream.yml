@@ -1,0 +1,89 @@
+name: Sync Upstream Horizon
+
+on:
+  schedule:
+    # 每天 UTC 03:00（东京时间 12:00）检查一次上游更新
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: '即使上游没有新提交也强制触发一次编译'
+        type: boolean
+        default: false
+      runner:
+        description: 'GitHub 原生 ARM64 Runner 镜像'
+        type: choice
+        default: ubuntu-26.04-arm
+        options:
+          - ubuntu-26.04-arm
+          - ubuntu-24.04-arm
+
+permissions:
+  contents: write
+
+jobs:
+  check-upstream:
+    name: Check Upstream Updates
+    runs-on: ${{ inputs.runner || 'ubuntu-26.04-arm' }}
+    timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.sync.outputs.changed }}
+      sha: ${{ steps.sync.outputs.sha }}
+      runner: ${{ steps.sync.outputs.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: sync
+        shell: bash
+        env:
+          FORCE_BUILD: ${{ inputs.force_build }}
+          INPUT_RUNNER: ${{ inputs.runner }}
+        run: |
+          set -euo pipefail
+          source upstream.lock
+          REPO="${UPSTREAM_REPO:-horizon-rust/horizon}"
+          BRANCH="${UPSTREAM_BRANCH:-main}"
+          CURRENT_REF="${UPSTREAM_REF:-}"
+          RUNNER="${INPUT_RUNNER:-ubuntu-26.04-arm}"
+
+          LATEST_SHA="$(git ls-remote "https://github.com/${REPO}.git" "refs/heads/${BRANCH}" | awk 'NR==1 {print $1}')"
+          if [[ -z "$LATEST_SHA" ]]; then
+            echo "::error::无法解析上游 ${REPO} 分支 ${BRANCH}"
+            exit 1
+          fi
+
+          echo "Current: ${CURRENT_REF}"
+          echo "Latest:  ${LATEST_SHA}"
+
+          if [[ "$CURRENT_REF" != "$LATEST_SHA" ]]; then
+            cat > upstream.lock <<EOF
+          UPSTREAM_REPO=${REPO}
+          UPSTREAM_BRANCH=${BRANCH}
+          UPSTREAM_REF=${LATEST_SHA}
+          EOF
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add upstream.lock
+            git commit -m "chore: sync upstream ${REPO}@${LATEST_SHA:0:8}"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$FORCE_BUILD" == "true" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=${LATEST_SHA}" >> "$GITHUB_OUTPUT"
+          echo "runner=${RUNNER}" >> "$GITHUB_OUTPUT"
+
+  trigger-build:
+    name: Trigger ARM64 Build
+    needs: check-upstream
+    if: needs.check-upstream.outputs.changed == 'true'
+    uses: ./.github/workflows/build-arm64.yml
+    with:
+      upstream_ref: ${{ needs.check-upstream.outputs.sha }}
+      runner: ${{ needs.check-upstream.outputs.runner }}
+      build_sdk: true
+      publish_release: true
+    permissions:
+      contents: write

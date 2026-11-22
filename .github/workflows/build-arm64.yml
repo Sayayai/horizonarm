@@ -1,0 +1,273 @@
+name: Build Linux ARM64 (Headless + Server + SDK)
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: '上游 horizon-rust/horizon 的分支、Tag 或 Commit SHA（留空则读取 upstream.lock）'
+        required: false
+        default: ''
+      runner:
+        description: 'GitHub 原生 ARM64 Runner 镜像（需要兼容旧版 glibc 时可选 ubuntu-24.04-arm）'
+        type: choice
+        default: ubuntu-26.04-arm
+        options:
+          - ubuntu-26.04-arm
+          - ubuntu-24.04-arm
+      build_sdk:
+        description: '同时编译 Linux ARM64 Server Mod SDK'
+        type: boolean
+        default: true
+      publish_release:
+        description: '将产物发布到 GitHub Release'
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - 'upstream.lock'
+      - 'scripts/**'
+      - '.github/workflows/build-arm64.yml'
+  workflow_call:
+    inputs:
+      upstream_ref:
+        type: string
+        required: false
+        default: ''
+      runner:
+        type: string
+        required: false
+        default: ubuntu-26.04-arm
+      build_sdk:
+        type: boolean
+        required: false
+        default: true
+      publish_release:
+        type: boolean
+        required: false
+        default: true
+
+concurrency:
+  group: build-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    name: Resolve Upstream Commit
+    runs-on: ${{ inputs.runner || 'ubuntu-26.04-arm' }}
+    timeout-minutes: 10
+    outputs:
+      repo: ${{ steps.meta.outputs.repo }}
+      sha: ${{ steps.meta.outputs.sha }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+      version: ${{ steps.meta.outputs.version }}
+      rust_version: ${{ steps.meta.outputs.rust_version }}
+      runner: ${{ steps.meta.outputs.runner }}
+      build_sdk: ${{ steps.meta.outputs.build_sdk }}
+      publish_release: ${{ steps.meta.outputs.publish_release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: meta
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.upstream_ref }}
+          INPUT_RUNNER: ${{ inputs.runner }}
+          INPUT_SDK: ${{ inputs.build_sdk }}
+          INPUT_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          set -euo pipefail
+          source upstream.lock
+          REPO="${UPSTREAM_REPO:-horizon-rust/horizon}"
+          REF="${INPUT_REF:-${UPSTREAM_REF:-main}}"
+          RUNNER="${INPUT_RUNNER:-ubuntu-26.04-arm}"
+
+          # 解析上游精确 Commit SHA
+          SHA="$(git ls-remote "https://github.com/${REPO}.git" "$REF" | awk 'NR==1 {print $1}')"
+          if [[ -z "$SHA" ]]; then
+            SHA="$REF"
+          fi
+          SHORT_SHA="${SHA:0:8}"
+          DATE_TAG="$(date -u +%Y.%m.%d)"
+          VERSION="${DATE_TAG}-${SHORT_SHA}"
+
+          # 读取上游锁定的 Rust 版本
+          RUST_VER="$(curl -fsSL "https://raw.githubusercontent.com/${REPO}/${SHA}/tools/ci/rust-version" | tr -d '[:space:]')"
+
+          {
+            echo "repo=$REPO"
+            echo "sha=$SHA"
+            echo "short_sha=$SHORT_SHA"
+            echo "version=$VERSION"
+            echo "rust_version=$RUST_VER"
+            echo "runner=$RUNNER"
+            echo "build_sdk=${INPUT_SDK:-true}"
+            echo "publish_release=${INPUT_RELEASE:-true}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Upstream: ${REPO}@${SHA} (Rust ${RUST_VER}, Runner ${RUNNER})"
+
+  build-binaries:
+    name: Build Headless Client & Server (ARM64)
+    needs: resolve
+    runs-on: ${{ needs.resolve.outputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout Upstream (${{ needs.resolve.outputs.short_sha }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.resolve.outputs.repo }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: upstream
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install Rust ${{ needs.resolve.outputs.rust_version }} + wasm32
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-11
+        with:
+          toolchain: ${{ needs.resolve.outputs.rust_version }}
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: upstream
+          shared-key: ${{ needs.resolve.outputs.runner }}-binaries-${{ needs.resolve.outputs.rust_version }}
+
+      - name: Install Linux Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake libssl-dev libasound2-dev libudev-dev
+
+      - name: Build Headless Client, Server & Tools
+        run: |
+          chmod +x scripts/build-binaries.sh
+          ./scripts/build-binaries.sh upstream dist/binaries "${{ needs.resolve.outputs.version }}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: horizon-headless-server-linux-arm64
+          path: |
+            dist/binaries/*.tar.gz
+            dist/binaries/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  build-sdk:
+    name: Build Server Mod SDK (ARM64)
+    needs: resolve
+    if: needs.resolve.outputs.build_sdk == 'true'
+    runs-on: ${{ needs.resolve.outputs.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout Upstream (${{ needs.resolve.outputs.short_sha }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ needs.resolve.outputs.repo }}
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: upstream
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install Rust ${{ needs.resolve.outputs.rust_version }} + wasm32
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable, 2026-11
+        with:
+          toolchain: ${{ needs.resolve.outputs.rust_version }}
+          targets: wasm32-unknown-unknown
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Cache Cargo Build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: upstream
+          shared-key: ${{ needs.resolve.outputs.runner }}-sdk-${{ needs.resolve.outputs.rust_version }}
+
+      - name: Install Linux Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake libssl-dev libasound2-dev libudev-dev
+
+      - name: Build & Verify ARM64 Server SDK
+        run: |
+          chmod +x scripts/build-sdk.sh
+          ./scripts/build-sdk.sh upstream dist/sdk
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: horizon-sdk-linux-arm64
+          path: dist/sdk/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: [resolve, build-binaries, build-sdk]
+    if: |
+      always() &&
+      needs.resolve.result == 'success' &&
+      needs.build-binaries.result == 'success' &&
+      (needs.build-sdk.result == 'success' || needs.build-sdk.result == 'skipped') &&
+      needs.resolve.outputs.publish_release == 'true'
+    runs-on: ${{ needs.resolve.outputs.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: horizon-headless-server-linux-arm64
+          path: release-assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.build-sdk.result == 'success'
+        with:
+          name: horizon-sdk-linux-arm64
+          path: release-assets
+
+      - name: Generate Unified SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          cd release-assets
+          rm -f *.sha256 SHA256SUMS.txt
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or Update Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: arm64-${{ needs.resolve.outputs.short_sha }}
+          UPSTREAM_REPO: ${{ needs.resolve.outputs.repo }}
+          UPSTREAM_SHA: ${{ needs.resolve.outputs.sha }}
+          RUST_VER: ${{ needs.resolve.outputs.rust_version }}
+          RUNNER: ${{ needs.resolve.outputs.runner }}
+        run: |
+          set -euo pipefail
+          NOTES=$(cat <<EOF
+          基于上游 [${UPSTREAM_REPO}@${UPSTREAM_SHA}](https://github.com/${UPSTREAM_REPO}/commit/${UPSTREAM_SHA}) 在 GitHub \`${RUNNER}\` 原生编译。
+
+          - **目标架构**：\`aarch64-unknown-linux-gnu\`
+          - **Rust 工具链**：\`${RUST_VER}\`
+          - **包含内容**：
+            - \`horizon-headless-server-linux-arm64.tar.gz\`：无头客户端 / 专用服引擎（\`horizon-client\` / \`horizon-engine\`，\`--no-default-features\` 无启动器与桌面外设）、\`horizon-ctl\`（CLI + MCP）、\`horizon-server\`、\`horizon-prepare\`、\`horizon-bots\`、\`cargo-horizon-mod\`、\`horizon-wasm-std.wasm\`
+            - Linux ARM64 Server Prebuilt SDK 切片与 \`api-source.tar.xz\`（如已启用 SDK 构建）
+          EOF
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+            gh release edit "$TAG" --notes "$NOTES"
+          else
+            gh release create "$TAG" release-assets/* \
+              --title "Horizon ARM64 Headless & Server (${TAG})" \
+              --notes "$NOTES"
+          fi

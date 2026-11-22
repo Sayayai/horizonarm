@@ -1,0 +1,3 @@
+UPSTREAM_REPO=horizon-rust/horizon
+UPSTREAM_BRANCH=main
+UPSTREAM_REF=main
