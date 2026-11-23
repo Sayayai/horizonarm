@@ -118,6 +118,8 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       rust_version: ${{ steps.meta.outputs.rust_version }}
       tag: ${{ steps.meta.outputs.tag }}
+      upstream_nightly: ${{ steps.meta.outputs.upstream_nightly }}
+      upstream_date: ${{ steps.meta.outputs.upstream_date }}
       build_amd64: ${{ steps.meta.outputs.build_amd64 }}
       build_arm64: ${{ steps.meta.outputs.build_arm64 }}
       build_sdk: ${{ steps.meta.outputs.build_sdk }}
@@ -159,6 +161,33 @@ jobs:
           DATE_TAG="$(date -u +%Y.%m.%d)"
           VERSION="${DATE_TAG}-${SHORT_SHA}"
           RELEASE_TAG="${TAG_PREFIX}${SHORT_SHA}"
+
+          # 解析上游提交时间与标准 Nightly 格式（例如 Nightly 2026-11-22 · f1bb66f）
+          python3 -c "
+          from datetime import datetime, timezone
+          import json, urllib.request
+
+          sha = '$SHA'
+          repo = '$REPO'
+          nightly_title = f'Nightly $DATE_TAG · $SHORT_SHA'
+          nightly_date = '$DATE_TAG UTC'
+          try:
+              req = urllib.request.Request(f'https://api.github.com/repos/{repo}/commits/{sha}', headers={'User-Agent': 'gh-actions'})
+              with urllib.request.urlopen(req) as resp:
+                  data = json.load(resp)
+                  d_str = data['commit']['committer']['date']
+                  dt = datetime.fromisoformat(d_str.replace('Z', '+00:00'))
+                  nightly_title = f'Nightly {dt.strftime(\"%Y-%m-%d\")} · {sha[:7]}'
+                  nightly_date = dt.strftime('%b %d, %Y · %H:%M UTC')
+          except Exception:
+              dt = datetime.now(timezone.utc)
+              nightly_title = f'Nightly {dt.strftime(\"%Y-%m-%d\")} · {sha[:7]}'
+              nightly_date = dt.strftime('%b %d, %Y · %H:%M UTC')
+
+          with open('$GITHUB_OUTPUT', 'a') as f:
+              f.write(f'upstream_nightly={nightly_title}\n')
+              f.write(f'upstream_date={nightly_date}\n')
+          "
 
           # 获取上游固定的 Rust 版本
           RUST_VER="$(curl -fsSL "https://raw.githubusercontent.com/${REPO}/${SHA}/tools/ci/rust-version" 2>/dev/null | tr -d '[:space:]' || echo "1.85.0")"
@@ -476,11 +505,18 @@ jobs:
           TAG: ${{ needs.resolve.outputs.tag }}
           REPO: ${{ needs.resolve.outputs.repo }}
           SHA: ${{ needs.resolve.outputs.sha }}
+          SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
+          UPSTREAM_NIGHTLY: ${{ needs.resolve.outputs.upstream_nightly }}
+          UPSTREAM_DATE: ${{ needs.resolve.outputs.upstream_date }}
           RUST_VER: ${{ needs.resolve.outputs.rust_version }}
         run: |
           set -euo pipefail
           NOTES=$(cat <<EOF
-          基于 [${REPO}@${SHA}](https://github.com/${REPO}/commit/${SHA}) 构建的 Horizon 专用服务端、无头客户端与官方标准原生 Mod SDK。
+          ## 📌 上游基线版本 (Upstream Baseline)
+          - **上游版本**：\`${UPSTREAM_NIGHTLY}\`
+          - **提交时间**：\`${UPSTREAM_DATE}\`
+          - **源码链接**：[${REPO}@${SHORT_SHA}](https://github.com/${REPO}/commit/${SHA})
+          - **Rust 工具链**：\`${RUST_VER}\`
 
           ### 包含补丁
           - 已自动整合下游定制补丁（如 \`printer-fix.patch\` 高频投影打印发包优化）。
@@ -511,14 +547,16 @@ jobs:
           EOF
           )
 
+          TITLE="Horizon Server & SDK · ${UPSTREAM_NIGHTLY}"
+
           if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
-            echo "Release $TAG 已经存在，更新产物与说明..."
+            echo "Release $TAG 已经存在，更新产物、标题与说明..."
             gh release upload "$TAG" release-assets/* --repo "$GH_REPO" --clobber
-            gh release edit "$TAG" --repo "$GH_REPO" --notes "$NOTES"
+            gh release edit "$TAG" --repo "$GH_REPO" --title "$TITLE" --notes "$NOTES"
           else
-            echo "创建新 Release $TAG..."
+            echo "创建新 Release $TAG: $TITLE..."
             gh release create "$TAG" release-assets/* \
               --repo "$GH_REPO" \
-              --title "Horizon Server & Mod SDK (${TAG})" \
+              --title "$TITLE" \
               --notes "$NOTES"
           fi
