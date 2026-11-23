@@ -212,6 +212,28 @@ jobs:
 
           echo "目标仓库: ${REPO}@${SHA} (Tag: ${RELEASE_TAG}, Rust ${RUST_VER})"
 
+      - name: 初始化 GitHub Release 桩 (支持产物实时流式上传)
+        if: steps.meta.outputs.publish_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: "Horizon Server & SDK · ${{ steps.meta.outputs.upstream_nightly }}"
+          UPSTREAM_REPO: ${{ steps.meta.outputs.repo }}
+          UPSTREAM_SHA: ${{ steps.meta.outputs.sha }}
+          UPSTREAM_NIGHTLY: ${{ steps.meta.outputs.upstream_nightly }}
+          UPSTREAM_DATE: ${{ steps.meta.outputs.upstream_date }}
+          RUST_VER: ${{ steps.meta.outputs.rust_version }}
+        run: |
+          NOTES=$(printf "基于上游 [%s@%s](https://github.com/%s/commit/%s) 自动构建发布。\n\n- **上游版本基线**：\`%s\`\n- **上游提交时间**：\`%s\`\n- **Rust 编译工具链**：\`%s\`\n- **分发状态**：⚡ **实时流式上传中**（各架构二进制与 SDK 切片编译完成即刻自动推送到本 Release，无需等待全部任务完成即可直接下载）\n" \
+            "$UPSTREAM_REPO" "$UPSTREAM_SHA" "$UPSTREAM_REPO" "$UPSTREAM_SHA" "$UPSTREAM_NIGHTLY" "$UPSTREAM_DATE" "$RUST_VER")
+
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GH_REPO" --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create "$TAG" --repo "$GH_REPO" --title "$TITLE" --notes "$NOTES"
+          fi
+
   build-binaries:
     name: 编译二进制 (${{ matrix.arch }})
     needs: resolve
@@ -286,6 +308,16 @@ jobs:
         run: |
           chmod +x scripts/build-binaries.sh
           ./scripts/build-binaries.sh upstream dist/binaries "${{ needs.resolve.outputs.version }}" "${{ matrix.arch }}"
+
+      - name: 实时发布当前架构二进制至 GitHub Release
+        if: steps.check.outputs.active == 'true' && needs.resolve.outputs.publish_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          echo "==> [实时上传] 正在上传 ${{ matrix.arch }} 架构二进制产物至 Release $TAG..."
+          gh release upload "$TAG" dist/binaries/*.tar.gz --repo "$GH_REPO" --clobber
 
       - name: 上传当前架构二进制构件
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -393,6 +425,16 @@ jobs:
           mkdir -p dist
           ./scripts/build-sdk.sh upstream dist ${{ matrix.server && '--server' || '--client' }}
 
+      - name: 实时发布当前平台 SDK 切片至 GitHub Release
+        if: steps.check.outputs.active == 'true' && needs.resolve.outputs.publish_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          echo "==> [实时上传] 正在上传 ${{ matrix.leg }} SDK 切片至 Release $TAG..."
+          gh release upload "$TAG" dist/* --repo "$GH_REPO" --clobber
+
       - name: 上传当前平台 SDK 切片构件
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.check.outputs.active == 'true'
@@ -464,6 +506,16 @@ jobs:
 
           echo "==> 完整 SDK 目录："
           ls -lh "$OUT_ABS"
+
+      - name: 实时发布 SDK 核心索引与元数据至 GitHub Release
+        if: needs.resolve.outputs.publish_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          echo "==> [实时上传] 正在上传 sdk.json, surface.json, build-data 及 api-source 至 Release $TAG..."
+          gh release upload "$TAG" dist/sdk.json dist/surface.json dist/build-data.tar.xz dist/api-source.tar.xz --repo "$GH_REPO" --clobber
 
       - name: 上传标准 Mod SDK 构件
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
