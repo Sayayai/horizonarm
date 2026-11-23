@@ -348,9 +348,6 @@ jobs:
           - leg: linux-x86_64-server
             arch: x86_64
             server: true
-          - leg: linux-x86_64
-            arch: x86_64
-            server: false
           - leg: linux-arm64-server
             arch: arm64
             server: true
