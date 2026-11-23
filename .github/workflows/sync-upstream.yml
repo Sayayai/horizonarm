@@ -1,10 +1,10 @@
-name: Sync Upstream Horizon
+name: 同步上游 Horizon 代码
 
 on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: '即使上游没有新提交也强制触发一次编译'
+        description: '即使上游没有新提交也强制触发一次完整编译'
         type: boolean
         default: false
 
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   check-upstream:
-    name: Check Upstream Updates
+    name: 检查上游更新
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -21,9 +21,11 @@ jobs:
       repo: ${{ steps.sync.outputs.repo }}
       sha: ${{ steps.sync.outputs.sha }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 检出本仓库
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - id: sync
+      - name: 检查上游提交并同步 lock 文件
+        id: sync
         shell: bash
         env:
           FORCE_BUILD: ${{ inputs.force_build }}
@@ -40,8 +42,8 @@ jobs:
             exit 1
           fi
 
-          echo "Current: ${CURRENT_REF}"
-          echo "Latest:  ${LATEST_SHA}"
+          echo "当前记录: ${CURRENT_REF}"
+          echo "最新提交: ${LATEST_SHA}"
 
           if [[ "$CURRENT_REF" != "$LATEST_SHA" ]]; then
             cat > upstream.lock <<EOF
@@ -64,7 +66,7 @@ jobs:
           echo "sha=${LATEST_SHA}" >> "$GITHUB_OUTPUT"
 
   trigger-build:
-    name: Trigger Full Build
+    name: 触发完整云编译流水线
     needs: check-upstream
     if: needs.check-upstream.outputs.changed == 'true'
     uses: ./.github/workflows/build-arm64.yml
