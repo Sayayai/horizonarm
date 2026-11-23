@@ -53,6 +53,7 @@ on:
     branches: [main]
     paths:
       - 'upstream.lock'
+      - 'patches/**'
       - 'scripts/**'
       - '.github/workflows/build-arm64.yml'
   workflow_call:
@@ -193,13 +194,27 @@ jobs:
             runner: ubuntu-26.04-arm
     runs-on: ${{ matrix.arch == 'arm64' && needs.resolve.outputs.arm_runner || needs.resolve.outputs.x86_runner }}
     if: |
-      (matrix.arch == 'x86_64' && needs.resolve.outputs.build_amd64 == 'true') ||
-      (matrix.arch == 'arm64' && needs.resolve.outputs.build_arm64 == 'true')
+      needs.resolve.outputs.build_amd64 == 'true' ||
+      needs.resolve.outputs.build_arm64 == 'true'
     timeout-minutes: 90
     steps:
+      - name: Check Arch Activation
+        id: check
+        run: |
+          ACTIVE=false
+          if [[ "${{ matrix.arch }}" == "x86_64" && "${{ needs.resolve.outputs.build_amd64 }}" == "true" ]]; then
+            ACTIVE=true
+          fi
+          if [[ "${{ matrix.arch }}" == "arm64" && "${{ needs.resolve.outputs.build_arm64 }}" == "true" ]]; then
+            ACTIVE=true
+          fi
+          echo "active=$ACTIVE" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.check.outputs.active == 'true'
 
       - name: Checkout Source (${{ needs.resolve.outputs.short_sha }})
+        if: steps.check.outputs.active == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ needs.resolve.outputs.repo }}
@@ -208,29 +223,40 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Apply Custom Downstream Patches
+        if: steps.check.outputs.active == 'true'
+        run: |
+          chmod +x scripts/apply-patches.sh
+          ./scripts/apply-patches.sh upstream patches
+
       - name: Install Rust ${{ needs.resolve.outputs.rust_version }}
+        if: steps.check.outputs.active == 'true'
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: ${{ needs.resolve.outputs.rust_version }}
 
       - name: Cache Cargo Build
+        if: steps.check.outputs.active == 'true'
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: upstream
           shared-key: ${{ matrix.arch }}-binaries-${{ needs.resolve.outputs.rust_version }}
 
       - name: Install Build Dependencies
+        if: steps.check.outputs.active == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config cmake libssl-dev libasound2-dev libudev-dev
 
       - name: Build Server & Headless Packages
+        if: steps.check.outputs.active == 'true'
         run: |
           chmod +x scripts/build-binaries.sh
           ./scripts/build-binaries.sh upstream dist/binaries "${{ needs.resolve.outputs.version }}" "${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.check.outputs.active == 'true'
         with:
           name: horizon-binaries-${{ matrix.arch }}
           path: dist/binaries/*.tar.gz
@@ -292,6 +318,12 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Apply Custom Downstream Patches
+        if: steps.check.outputs.active == 'true'
+        run: |
+          chmod +x scripts/apply-patches.sh
+          ./scripts/apply-patches.sh upstream patches
+
       - name: Install Rust ${{ needs.resolve.outputs.rust_version }}
         if: steps.check.outputs.active == 'true'
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
@@ -344,6 +376,8 @@ jobs:
     runs-on: ${{ needs.resolve.outputs.x86_runner }}
     timeout-minutes: 60
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Checkout Source (${{ needs.resolve.outputs.short_sha }})
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -352,6 +386,11 @@ jobs:
           path: upstream
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Apply Custom Downstream Patches
+        run: |
+          chmod +x scripts/apply-patches.sh
+          ./scripts/apply-patches.sh upstream patches
 
       - name: Install Rust ${{ needs.resolve.outputs.rust_version }}
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
@@ -442,6 +481,9 @@ jobs:
           set -euo pipefail
           NOTES=$(cat <<EOF
           基于 [${REPO}@${SHA}](https://github.com/${REPO}/commit/${SHA}) 构建的 Horizon 专用服务端、无头客户端与官方标准原生 Mod SDK。
+
+          ### 包含补丁
+          - 已自动整合下游定制补丁（如 \`printer-fix.patch\` 高频投影打印发包优化）。
 
           ### 目标架构与工具链
           - **AMD64 (x86_64)**：\`x86_64-unknown-linux-gnu\`

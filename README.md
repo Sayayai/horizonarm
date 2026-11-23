@@ -55,15 +55,20 @@
 
 ## 快速使用
 
-### 1. 维护自改服务端
+### 1. 维护自改服务端与自定义补丁
 
-在仓库根目录的 `upstream.lock` 中配置你的服务端仓库信息：
+本仓库支持 **自动跟随上游 + 动态注入下游补丁** 的工作流：
 
+1. 在 `upstream.lock` 中配置上游源仓库（默认 `horizon-rust/horizon`）：
 ```bash
-UPSTREAM_REPO=你的组织或用户名/你的horizon仓库
+UPSTREAM_REPO=horizon-rust/horizon
 UPSTREAM_BRANCH=main
 UPSTREAM_REF=main
 ```
+
+2. 在 `patches/` 目录下放置你的 `.patch` 补丁文件（例如自带的 `printer-fix.patch`）：
+   - **`printer-fix.patch`**：扩大玩家发包阈值（`PACKETS_PER_TICK` 从 400 提高至 5000），解除动作包（Action）对移动包（Move）的按 Tick 阻塞滞留，避免 Litematica 投影高频打印/连续发包被误踢（`invalid_player_movement`）或导致发包队列严重积压。
+   - 云编译在拉取上游源码后，会自动调用 `scripts/apply-patches.sh` 依次应用所有补丁，并将改动同步注入到二进制与 Mod SDK 切片构建中。
 
 ### 2. 手动触发云编译
 
