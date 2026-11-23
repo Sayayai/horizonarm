@@ -342,6 +342,9 @@ jobs:
           - leg: linux-arm64-server
             arch: arm64
             server: true
+          - leg: linux-arm64
+            arch: arm64
+            server: false
     runs-on: ${{ matrix.arch == 'arm64' && needs.resolve.outputs.arm_runner || needs.resolve.outputs.x86_runner }}
     timeout-minutes: 120
     steps:
