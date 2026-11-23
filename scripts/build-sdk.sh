@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 用法: scripts/build-sdk.sh <UPSTREAM_DIR> <OUT_DIR>
+# 用法: scripts/build-sdk.sh <UPSTREAM_DIR> <OUT_DIR> [--server|--client]
 UPSTREAM_DIR="${1:?missing UPSTREAM_DIR}"
 OUT_DIR="${2:?missing OUT_DIR}"
+MODE="${3:---server}"
 
 mkdir -p "$OUT_DIR"
 OUT_ABS="$(cd "$OUT_DIR" && pwd)"
@@ -16,15 +17,18 @@ export RUSTC_WRAPPER=""
 export RUSTC_WORKSPACE_WRAPPER=""
 export HORIZON_NO_AUDIO=1
 
-echo "==> [1/3] 构建 Linux ARM64 Server 原生 Mod SDK (prebuilt_game.py --server)"
-python3 tools/prebuilt_game.py build "$WORK_DIR/prebuilt" --server
+BUILD_ARGS=()
+if [[ "$MODE" == "--server" ]]; then
+  BUILD_ARGS=("--server")
+  echo "==> [1/2] 构建 Server 原生 Mod SDK (prebuilt_game.py build --server)"
+else
+  echo "==> [1/2] 构建 Client 原生 Mod SDK (prebuilt_game.py build)"
+fi
 
-echo "==> [2/3] 打包原生 Mod SDK 切片 (runtime / api / engine / build-data)"
+python3 tools/prebuilt_game.py build "$WORK_DIR/prebuilt" "${BUILD_ARGS[@]}"
+
+echo "==> [2/2] 打包原生 Mod SDK 切片 (runtime / api / engine / build-data / surface)"
 python3 tools/prebuilt_game.py pack "$WORK_DIR/prebuilt" "$OUT_ABS"
 
-echo "==> [3/3] 打包完整生成的 Mod API 源码 (api-source.tar.xz)"
-python3 tools/sdk_api_source.py build "$WORK_DIR/api-source"
-python3 tools/sdk_api_source.py archive "$WORK_DIR/api-source" "$OUT_ABS/api-source.tar.xz"
-
-echo "==> SDK 构建完成:"
+echo "==> SDK 切片打包完成:"
 ls -lh "$OUT_ABS"
