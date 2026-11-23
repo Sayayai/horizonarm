@@ -263,15 +263,6 @@ jobs:
           fi
           echo "active=$ACTIVE" >> "$GITHUB_OUTPUT"
 
-      - name: 扩展 Linux 交换分区 (Swap) 防止大工程内存溢出
-        if: steps.check.outputs.active == 'true'
-        run: |
-          sudo fallocate -l 8G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile || true
-          free -h
-
       - name: 检出本仓库脚本与补丁
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.check.outputs.active == 'true'
@@ -375,15 +366,6 @@ jobs:
             fi
           fi
           echo "active=$BUILD_LEG" >> "$GITHUB_OUTPUT"
-
-      - name: 扩展 Linux 交换分区 (Swap) 防止 SDK 编译内存溢出 (OOM 143)
-        if: steps.check.outputs.active == 'true'
-        run: |
-          sudo fallocate -l 8G /swapfile 2>/dev/null || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile || true
-          free -h
 
       - name: 检出本仓库脚本与补丁
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
